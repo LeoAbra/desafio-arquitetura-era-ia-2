@@ -76,6 +76,10 @@ def http(method: str, url: str, body=None, headers: dict | None = None, timeout:
     return status, payload
 
 
+def _short(payload) -> str:
+    return " ".join(str(payload).split())[:160]
+
+
 def auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
@@ -274,7 +278,7 @@ def run_step(step: dict, ctx: dict, log: list) -> list[str]:
         entry = {"action": "ask", "token": step["token"], "question": step["question"], "status": status}
         log.append(entry)
         if status != 200 or not isinstance(result, dict) or "answer" not in result:
-            raise EvaluatorError(f"POST /ask ({step['token']}) respondeu {status}: {str(result)[:200]}")
+            raise EvaluatorError(f"POST /ask ({step['token']}) respondeu {status}: {_short(result)}")
         entry.update(origin=result.get("origin"), answer=result.get("answer"),
                      sources=[s.get("document_id") for s in result.get("sources") or []])
         ctx["last_question"], ctx["last_answer"] = step["question"], result.get("answer")
@@ -287,7 +291,7 @@ def run_step(step: dict, ctx: dict, log: list) -> list[str]:
         log.append({"action": action, "doc_id": doc["doc_id"], "status": status})
         allowed = step.get("allow_status", [200])
         if status not in allowed:
-            raise EvaluatorError(f"POST /admin/documents ({doc['doc_id']}) respondeu {status}: {str(result)[:200]}")
+            raise EvaluatorError(f"POST /admin/documents ({doc['doc_id']}) respondeu {status}: {_short(result)}")
         return []
 
     if action == "delete":
