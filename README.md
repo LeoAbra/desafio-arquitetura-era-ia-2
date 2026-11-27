@@ -4,7 +4,7 @@ Entrega do desafio do módulo Arquitetura na Era da IA (MBA FullCycle). O enunci
 
 ## Visão geral
 
-O assistente de RH da Vereda (Python 3.12 + FastAPI, RAG no pgvector, cache exato e semântico) tinha seis incidentes abertos, todos respondidos com `200`. Cada um foi reproduzido na aplicação recebida e diagnosticado no código ([`docs/incidents/`](docs/incidents/)), virou item de uma suíte de avaliação determinística que roda pela borda ([`evals/`](evals/)) e foi registrado numa baseline da aplicação recebida (tag [`v1-baseline`](../../tree/v1-baseline), `evals/baselines/v1-baseline.json`), onde todos os itens de incidente e de ataque falham.
+O assistente de RH da Vereda (Python 3.12 + FastAPI, RAG no pgvector, cache exato e semântico) tinha seis incidentes abertos, todos respondidos com `200`. Cada um foi reproduzido na aplicação recebida e diagnosticado no código ([`docs/incidents/`](docs/incidents/)), virou item de uma suíte de avaliação determinística que roda pela borda ([`evals/`](evals/)) e foi registrado numa baseline da aplicação recebida (tag [`v1-baseline`](https://github.com/LeoAbra/desafio-arquitetura-era-ia-2/tree/v1-baseline), `evals/baselines/v1-baseline.json`), onde todos os itens de incidente e de ataque falham.
 
 As correções ficaram na arquitetura em volta das chamadas de IA, sem reescrever a aplicação: a chave do cache passou a conter a empresa e respostas pessoais deixaram de ser cacheadas; a reindexação trata a remoção e invalida as respostas derivadas da base; o prompt mantém o prefixo estável para o cache do provider; o conteúdo publicado pelo RH é tratado como dado na montagem do contexto e na saída; e a telemetria passa por um OpenTelemetry Collector, com um span por etapa, conteúdo só em `development` e redação de CPF e salário no Collector. Um gate pareado compara cada item com a baseline e roda localmente e no GitHub Actions. As decisões estão em ADRs ([`docs/adr/`](docs/adr/)) e no [threat model](docs/threat-model.md).
 
@@ -142,8 +142,8 @@ Formato do relatório (JSON, um por execução):
 
 Workflow: [`.github/workflows/gate.yml`](.github/workflows/gate.yml) sobe o compose e roda o gate em todo push e pull request, e guarda o relatório como artefato `gate-report`.
 
-- Execução aprovada na `main`: _(link a preencher após o push)_
-- Execução reprovada por uma correção desfeita de propósito (PR que reverte a correção do INC-01): _(link a preencher após o push)_
+- Execução aprovada na `main`: https://github.com/LeoAbra/desafio-arquitetura-era-ia-2/actions/runs/46084329017
+- Execução reprovada por uma correção desfeita de propósito ([PR #1](https://github.com/LeoAbra/desafio-arquitetura-era-ia-2/pull/1), que tira a empresa da chave do cache e desfaz a correção do INC-01): https://github.com/LeoAbra/desafio-arquitetura-era-ia-2/actions/runs/46084440339 — `gate: REPROVADO (3 itens: 3 item de incidente falhando)`, listando `inc01-vr-boreal-depois-da-estrela`, `inc01-vr-boreal-mesma-frase` e `inc01-home-office-estrela-depois-da-boreal`. O PR fica aberto, sem merge.
 
 ## Mapa de decisões
 
