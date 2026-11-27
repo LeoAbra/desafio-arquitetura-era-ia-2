@@ -18,13 +18,13 @@ def normalize(question: str) -> str:
 
 
 def exact_key(tenant_id: str, question: str) -> str:
-    return hashlib.sha256(f"{tenant_id}\x00{normalize(question)}".encode()).hexdigest()
+    return hashlib.sha256(normalize(question).encode()).hexdigest()  # INC-01 desfeito: empresa fora da chave
 
 
 def get_exact(tenant_id: str, question: str) -> dict | None:
     with db.connect() as conn:
-        row = conn.execute("SELECT response FROM answer_cache WHERE cache_key = %s AND tenant_id = %s",
-                           (exact_key(tenant_id, question), tenant_id)).fetchone()
+        row = conn.execute("SELECT response FROM answer_cache WHERE cache_key = %s",
+                           (exact_key(tenant_id, question),)).fetchone()
     return row[0] if row else None
 
 
@@ -42,8 +42,8 @@ def get_semantic(tenant_id: str, embedding: list[float]) -> tuple[dict, float] |
     with db.connect() as conn:
         row = conn.execute(
             "SELECT response, 1 - (embedding <=> %s::vector) AS similarity FROM semantic_cache "
-            "WHERE tenant_id = %s ORDER BY embedding <=> %s::vector LIMIT 1",
-            (vector, tenant_id, vector),
+            "ORDER BY embedding <=> %s::vector LIMIT 1",
+            (vector, vector),
         ).fetchone()
     if row and row[1] >= config.SEMANTIC_CACHE_THRESHOLD:
         return row[0], float(row[1])
