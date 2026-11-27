@@ -438,9 +438,10 @@ def run_suite(output: Path | None = None, only: list[str] | None = None) -> dict
         reports = EVALS / "reports"
         reports.mkdir(exist_ok=True)
         output = reports / f"report-{started.strftime('%Y%m%dT%H%M%SZ')}.json"
-        (reports / "latest.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        (reports / "latest.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8",
+                                             newline="\n")
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8", newline="\n")
     print(f"\nsuíte: {summary['PASS']} PASS, {summary['FAIL']} FAIL, {summary['ERROR']} ERROR  -> {output}")
     report["_path"] = str(output)
     return report

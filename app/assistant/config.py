@@ -2,6 +2,11 @@ import os
 
 APP_ENV = os.environ.get("APP_ENV", "production")
 
+# Política de telemetria (ADR 0005): uma configuração só, o ambiente, decide a captura de conteúdo.
+# production: nenhum conteúdo (pergunta, mensagens, resposta) vai para o trace.
+# development: as mensagens enviadas ao modelo, a pergunta e a resposta vão, para o suporte investigar.
+CAPTURE_CONTENT = APP_ENV == "development"
+
 PROVIDER_BASE_URL = os.environ.get("PROVIDER_BASE_URL", "http://provider-fake:8090/openai/v1")
 PROVIDER_API_KEY = os.environ.get("FAKE_OPENAI_KEY", "")
 CHAT_MODEL = os.environ.get("CHAT_MODEL", "gpt-fake-large")
@@ -17,7 +22,7 @@ RETRIEVAL_TOP_K = int(os.environ.get("RETRIEVAL_TOP_K", "4"))
 CHUNK_MAX_CHARS = 1200
 
 OTEL_SERVICE_NAME = os.environ.get("OTEL_SERVICE_NAME", "vereda-assistant")
-OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4318")
+OTEL_EXPORTER_OTLP_ENDPOINT = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318")
 
 TENANT_NAMES = {
     "estrela": "Padaria Estrela",

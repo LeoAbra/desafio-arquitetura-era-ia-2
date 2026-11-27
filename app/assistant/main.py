@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
 
-from . import cache, db, hr, knowledge, llm, retrieval, telemetry
+from . import cache, config, db, guard, hr, knowledge, llm, retrieval, telemetry
 from .prompt import build_messages
 from .schemas import AskRequest, AskResponse, DocumentRequest
 
@@ -52,46 +52,78 @@ def ask(body: AskRequest,
         x_employee_id: str | None = Header(default=None)):
     tenant_id = require_tenant(x_tenant_id)
     question = body.question
+    tracer = telemetry.tracer
 
-    with telemetry.tracer.start_as_current_span("ask") as span:
-        span.set_attribute("app.tenant_id", tenant_id)
-        span.set_attribute("app.employee_id", x_employee_id or "")
-        span.set_attribute("app.question", question)
+    with tracer.start_as_current_span("ask") as root:
+        root.set_attribute("app.tenant_id", tenant_id)
+        root.set_attribute("app.employee_id", x_employee_id or "")
+        if config.CAPTURE_CONTENT:
+            root.set_attribute("app.question", question)
 
-        cached = cache.get_exact(question)
-        if cached is not None:
-            span.set_attribute("app.origin", "exact_cache")
-            return {**cached, "origin": "exact_cache"}
+        def finish(response: dict, origin: str) -> dict:
+            root.set_attribute("app.origin", origin)
+            if config.CAPTURE_CONTENT:
+                root.set_attribute("app.answer", response["answer"])
+            return {**response, "origin": origin}
+
+        # Resposta pessoal (montada com dados do hr-fake) é verdade só para quem perguntou e só
+        # enquanto o hr-fake não mudar: não é lida nem gravada nos caches (ADR 0001).
+        personal = bool(x_employee_id) and hr.is_personal(question)
+        root.set_attribute("app.cache.eligible", not personal)
+
+        if not personal:
+            with tracer.start_as_current_span("cache.exact.lookup") as span:
+                cached = cache.get_exact(tenant_id, question)
+                span.set_attribute("app.cache.hit", cached is not None)
+            if cached is not None:
+                return finish(cached, "exact_cache")
 
         embedding = llm.embed([question])[0]
-        semantic = cache.get_semantic(embedding)
-        if semantic is not None:
-            response, similarity = semantic
-            span.set_attribute("app.origin", "semantic_cache")
-            span.set_attribute("app.semantic_similarity", similarity)
-            return {**response, "origin": "semantic_cache"}
+
+        if not personal:
+            with tracer.start_as_current_span("cache.semantic.lookup") as span:
+                semantic = cache.get_semantic(tenant_id, embedding)
+                span.set_attribute("app.cache.hit", semantic is not None)
+                if semantic is not None:
+                    span.set_attribute("app.cache.similarity", semantic[1])
+            if semantic is not None:
+                return finish(semantic[0], "semantic_cache")
 
         employee = None
-        if x_employee_id and hr.is_personal(question):
-            employee = hr.get_employee(tenant_id, x_employee_id)
-        chunks = retrieval.search(tenant_id, embedding)
-        messages = build_messages(tenant_id, question, chunks, employee)
-        text, usage = llm.chat(messages)
+        if personal:
+            with tracer.start_as_current_span("hr.get_employee") as span:
+                employee = hr.get_employee(tenant_id, x_employee_id)
+                span.set_attribute("app.hr.found", employee is not None)
+
+        with tracer.start_as_current_span("retrieval.search") as span:
+            chunks = retrieval.search(tenant_id, embedding)
+            span.set_attribute("app.retrieval.top_k", config.RETRIEVAL_TOP_K)
+            span.set_attribute("app.retrieval.doc_ids", [c["doc_id"] for c in chunks])
+
+        with tracer.start_as_current_span("prompt.build") as span:
+            messages, removed = build_messages(tenant_id, question, chunks, employee)
+            span.set_attribute("app.guard.context_removed", removed)
+
+        text, _usage = llm.chat(messages)
         answer, cited = parse_model_output(text)
 
-        titles = {c["doc_id"]: c["title"] for c in chunks}
-        sources = [{"document_id": doc_id, "title": titles[doc_id]} for doc_id in dict.fromkeys(cited)
-                   if doc_id in titles]
+        with tracer.start_as_current_span("guard.output") as span:
+            answer, blocked = guard.check_output(answer)
+            span.set_attribute("app.guard.blocked", blocked is not None)
+            if blocked:
+                span.set_attribute("app.guard.reason", blocked)
+                cited = []
+            titles = {c["doc_id"]: guard.safe_title(c["title"], c["doc_id"]) for c in chunks}
+            sources = [{"document_id": doc_id, "title": titles[doc_id]} for doc_id in dict.fromkeys(cited)
+                       if doc_id in titles]
         response = {"answer": answer, "sources": sources}
 
-        cache.put_exact(question, response)
-        cache.put_semantic(question, embedding, response)
+        if not personal and not blocked:
+            with tracer.start_as_current_span("cache.store"):
+                cache.put_exact(tenant_id, question, response)
+                cache.put_semantic(tenant_id, question, embedding, response)
 
-        span.set_attribute("app.origin", "model")
-        span.set_attribute("app.prompt", messages[1]["content"])
-        span.set_attribute("app.answer", answer)
-        span.set_attribute("app.total_tokens", usage.get("total_tokens", 0))
-        return {**response, "origin": "model"}
+        return finish(response, "model")
 
 
 @app.get("/admin/documents")

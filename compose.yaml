@@ -33,15 +33,28 @@ services:
     ports:
       - "16686:16686"
 
+  # Único caminho dos traces até o Jaeger: redige CPF e salário antes de exportar (ADR 0005).
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.139.0
+    command: ["--config=/etc/otelcol/collector.yaml"]
+    volumes:
+      - ./otel/collector.yaml:/etc/otelcol/collector.yaml:ro
+    depends_on:
+      jaeger:
+        condition: service_started
+
   app:
     build: ./app
     env_file:
       - path: .env
         required: false
     environment:
-      APP_ENV: production
+      # Uma configuração só decide a captura de conteúdo nos traces (ADR 0005):
+      # production (padrão) não captura nada; development captura as mensagens enviadas ao modelo.
+      # Para subir em development: APP_ENV=development docker compose up -d --wait app
+      APP_ENV: ${APP_ENV:-production}
       DATABASE_URL: postgresql://vereda:vereda@postgres:5432/vereda
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health')"]
       interval: 2s
@@ -54,7 +67,7 @@ services:
         condition: service_healthy
       hr-fake:
         condition: service_healthy
-      jaeger:
+      otel-collector:
         condition: service_started
 
   edge:

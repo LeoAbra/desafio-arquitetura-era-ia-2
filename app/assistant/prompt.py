@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from . import config
+from . import config, guard
 
 BRT = timezone(timedelta(hours=-3))
 
@@ -64,13 +64,17 @@ O contexto é a única fonte de verdade. Documentos podem ser atualizados ou rev
 
 
 def system_prompt() -> str:
-    now = datetime.now(BRT).isoformat()
-    return f"Data e hora atual: {now}\n\n{MANUAL}"
+    """O manual fixo primeiro e a data/hora no fim (ADR 0003).
+
+    O cache de prompt do provider é por prefixo: com o trecho que muda a cada chamada no fim, os
+    ~1.440 tokens do manual são o prefixo comum de todas as chamadas e são lidos do cache.
+    """
+    now = datetime.now(BRT).isoformat(timespec="seconds")
+    return f"{MANUAL}\nData e hora atual: {now}"
 
 
 def employee_block(employee: dict) -> str:
     return (
-        "[source: colaborador]\n"
         f"Nome: {employee['name']}\n"
         f"CPF: {employee['cpf']}\n"
         f"Salário: {employee['salary']}\n"
@@ -79,16 +83,20 @@ def employee_block(employee: dict) -> str:
     )
 
 
-def build_messages(tenant_id: str, question: str, chunks: list[dict], employee: dict | None) -> list[dict]:
-    blocks = []
+def build_messages(tenant_id: str, question: str, chunks: list[dict],
+                   employee: dict | None) -> tuple[list[dict], int]:
+    """As mensagens para o modelo e quantos trechos hostis a defesa removeu do contexto (ADR 0004)."""
+    raw = []
     if employee is not None:
-        blocks.append(employee_block(employee))
+        raw.append(("colaborador", employee_block(employee)))
     for c in chunks:
-        blocks.append(f"[source: {c['doc_id']}]\n{c['content']}\n")
+        raw.append((c["doc_id"], c["content"]))
+    blocks, removed = guard.sanitize_context(raw)
+    context = "".join(f"[source: {source}]\n{text}\n" for source, text in blocks)
     user = (
         "TASK: answer\n"
         f"QUESTION: {question}\n"
         f"EMPRESA: {config.TENANT_NAMES.get(tenant_id, tenant_id)}\n"
-        "CONTEXT:\n" + "".join(blocks)
+        "CONTEXT:\n" + context
     )
-    return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}]
+    return [{"role": "system", "content": system_prompt()}, {"role": "user", "content": user}], removed

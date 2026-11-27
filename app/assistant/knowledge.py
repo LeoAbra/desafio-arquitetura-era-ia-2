@@ -4,7 +4,7 @@ import hashlib
 import logging
 from pathlib import Path
 
-from . import config, db, llm
+from . import cache, config, db, llm
 
 log = logging.getLogger("assistant.knowledge")
 
@@ -76,21 +76,35 @@ def list_documents(tenant_id: str) -> list[dict]:
 
 
 def reindex(tenant_id: str) -> dict:
-    """Indexa os documentos novos ou alterados da empresa. Documentos sem mudança são pulados."""
+    """Leva o índice da empresa ao estado dos documentos publicados e invalida os derivados (ADR 0002).
+
+    Idempotente: documentos sem mudança são pulados; novos e alterados são reindexados; trechos de
+    documentos que deixaram de existir são removidos. Se algo mudou, as respostas guardadas nos caches
+    da empresa também são descartadas, porque foram derivadas da base anterior.
+    """
     with db.connect() as conn:
         documents = conn.execute("SELECT doc_id, title, content, content_hash FROM documents WHERE tenant_id = %s",
                                  (tenant_id,)).fetchall()
-        indexed = {r[0]: r[1] for r in conn.execute(
-            "SELECT DISTINCT doc_id, doc_hash FROM chunks WHERE tenant_id = %s", (tenant_id,)).fetchall()}
+        indexed: dict[str, set[str]] = {}
+        for doc_id, doc_hash in conn.execute(
+                "SELECT DISTINCT doc_id, doc_hash FROM chunks WHERE tenant_id = %s", (tenant_id,)).fetchall():
+            indexed.setdefault(doc_id, set()).add(doc_hash)
 
-    summary = {"indexed": [], "unchanged": []}
+    summary = {"indexed": [], "unchanged": [], "removed": sorted(set(indexed) - {d[0] for d in documents})}
+    changes = []
     for doc_id, title, content, doc_hash in documents:
-        if indexed.get(doc_id) == doc_hash:
+        if indexed.get(doc_id) == {doc_hash}:
             summary["unchanged"].append(doc_id)
             continue
         pieces = chunk(title, content)
         vectors = llm.embed(pieces) if pieces else []
-        with db.connect() as conn:
+        changes.append((doc_id, title, doc_hash, pieces, vectors))
+        summary["indexed"].append(doc_id)
+
+    with db.connect() as conn, conn.transaction():
+        for doc_id in summary["removed"]:
+            conn.execute("DELETE FROM chunks WHERE tenant_id = %s AND doc_id = %s", (tenant_id, doc_id))
+        for doc_id, title, doc_hash, pieces, vectors in changes:
             conn.execute("DELETE FROM chunks WHERE tenant_id = %s AND doc_id = %s", (tenant_id, doc_id))
             for ordinal, (text, vector) in enumerate(zip(pieces, vectors)):
                 conn.execute(
@@ -98,8 +112,11 @@ def reindex(tenant_id: str) -> dict:
                     "VALUES (%s, %s, %s, %s, %s, %s, %s::vector)",
                     (tenant_id, doc_id, doc_hash, ordinal, title, text, db.vector_literal(vector)),
                 )
-        summary["indexed"].append(doc_id)
-    log.info("reindex tenant=%s indexed=%s unchanged=%s", tenant_id, summary["indexed"], summary["unchanged"])
+
+    if summary["indexed"] or summary["removed"]:
+        summary["cache_invalidated"] = cache.invalidate_tenant(tenant_id)
+    log.info("reindex tenant=%s indexed=%s removed=%s unchanged=%s cache_invalidated=%s", tenant_id,
+             summary["indexed"], summary["removed"], summary["unchanged"], summary.get("cache_invalidated", 0))
     return summary
 
 

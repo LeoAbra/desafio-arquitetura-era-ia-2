@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS chunks (
 
 CREATE TABLE IF NOT EXISTS answer_cache (
     cache_key  TEXT PRIMARY KEY,
+    tenant_id  TEXT NOT NULL,
     question   TEXT NOT NULL,
     response   JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -37,11 +38,16 @@ CREATE TABLE IF NOT EXISTS answer_cache (
 
 CREATE TABLE IF NOT EXISTS semantic_cache (
     id         BIGSERIAL PRIMARY KEY,
+    tenant_id  TEXT NOT NULL,
     question   TEXT NOT NULL,
     embedding  VECTOR({config.EMBEDDING_DIMENSIONS}) NOT NULL,
     response   JSONB NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS answer_cache_tenant ON answer_cache (tenant_id);
+CREATE INDEX IF NOT EXISTS semantic_cache_tenant ON semantic_cache (tenant_id);
+CREATE INDEX IF NOT EXISTS chunks_tenant_doc ON chunks (tenant_id, doc_id);
 """
 
 
